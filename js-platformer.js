@@ -119,7 +119,7 @@ function elt(name, className) {
 function DOMDisplay(parent, level) {
   this.wrap = parent.appendChild(elt("div", "game"));
   this.level = level;
-  
+
   this.wrap.appendChild(this.drawBackground());
   this.actorLayer = null;
   this.drawFrame();
@@ -159,9 +159,10 @@ DOMDisplay.prototype.drawFrame = function() {
   if (this.actorLayer)
     this.wrap.removeChild(this.actorLayer);
   this.actorLayer = this.wrap.appendChild(this.drawActors());
-  this.wrap.className = "game" + (this.level.status || "");
+  this.wrap.className = "game " + (this.level.status || "");
   this.scrollPlayerIntoView();
 };
+
 
 // Used to scroll view to keep player in center
 DOMDisplay.prototype.scrollPlayerIntoView = function() {
@@ -180,7 +181,7 @@ DOMDisplay.prototype.scrollPlayerIntoView = function() {
     this.wrap.scrollLeft = center.x - margin;
   else if (center.x > right - margin)
     this.wrap.scrollLeft = center.x + margin - width;
-  else if (center.y < top + margin)
+  if (center.y < top + margin)
     this.wrap.scrollTop = center.y - margin;
   else if (center.y > bottom - margin)
     this.wrap.scrollTop = center.y + margin - height;
@@ -204,7 +205,7 @@ Level.prototype.obstacleAt = function(pos, size) {
   var xEnd = Math.ceil(pos.x + size.x);
   var yStart = Math.floor(pos.y);
   var yEnd = Math.ceil(pos.y + size.y);
-  
+
   if (xStart < 0 || xEnd > this.width || yStart < 0)
     return "wall";
   if (yEnd > this.height)
@@ -219,7 +220,7 @@ Level.prototype.obstacleAt = function(pos, size) {
 
 // Scans the array of actors for another overlapping actor
 Level.prototype.actorAt = function(actor) {
-  for (var i = 0; i > this.actors.length; i++) {
+  for (var i = 0; i < this.actors.length; i++) {
     var other = this.actors[i];
     if (other != actor &&
         actor.pos.x + actor.size.x > other.pos.x &&
@@ -232,7 +233,9 @@ Level.prototype.actorAt = function(actor) {
 
 var maxStep = 0.05;
 
-//
+// Gives each actor a chance to act using steps no larger then 0.05
+// in order to prevent collisions resulting in getting stuck
+// if game has been won or lost will continue movement for finishDelay
 Level.prototype.animate = function(step, keys) {
   if (this.status != null)
     this.finishDelay -= step;
@@ -242,9 +245,12 @@ Level.prototype.animate = function(step, keys) {
     this.actors.forEach(function(actor) {
       actor.act(thisStep, this, keys);
     }, this);
+    step -= thisStep;
   }
 };
 
+// Lava act function moving by speed multiplied by time giving distance
+// if collision is detected the lava will respond depending on type
 Lava.prototype.act = function(step, level) {
   var newPos = this.pos.plus(this.speed.times(step));
   if (!level.obstacleAt(newPos, this.size))
@@ -257,31 +263,38 @@ Lava.prototype.act = function(step, level) {
 
 var wobbleSpeed = 8, wobbleDist = 0.07;
 
+// Coin will move up and down following a sin wave pattern using a certain 
+// wobbleDist using it's random wobble value to prevent simultatious movement
 Coin.prototype.act = function(step) {
   this.wobble += step * wobbleSpeed;
   var wobblePos = Math.sin(this.wobble) * wobbleDist;
   this.pos = this.basePos.plus(new Vector(0, wobblePos));
 };
 
+// Player movements are handled seperately by axis
 var playerXSpeed = 7;
 
+// Moves player horizontally and checks for obstacles in grid
 Player.prototype.moveX = function(step, level, keys) {
-  this.speed = 0;
+  this.speed.x = 0;
   if (keys.left) this.speed.x -= playerXSpeed;
   if (keys.right) this.speed.x += playerXSpeed;
-  
+
   var motion = new Vector(this.speed.x * step, 0);
   var newPos = this.pos.plus(motion);
   var obstacle = level.obstacleAt(newPos, this.size);
   if (obstacle)
     level.playerTouched(obstacle);
   else
-   this.pos = newPos;
+    this.pos = newPos;
 };
 
 var gravity = 30;
 var jumpSpeed = 17;
 
+// Players vertical motion is determinied first by using gravity then finds out
+// if player is touching obstacle in grid setting speed to zero
+// only if obstacle is touched can player jump else player falls by gravity
 Player.prototype.moveY = function(step, level, keys) {
   this.speed.y += step * gravity;
   var motion = new Vector(0, this.speed.y * step);
@@ -298,14 +311,16 @@ Player.prototype.moveY = function(step, level, keys) {
   }
 };
 
+// Player act calls both moveX and moveY with it's arguments
+// check collisions with actors and handles losing animation
 Player.prototype.act = function(step, level, keys) {
   this.moveX(step, level, keys);
   this.moveY(step, level, keys);
-  
+
   var otherActor = level.actorAt(this);
   if (otherActor)
     level.playerTouched(otherActor.type, otherActor);
-    
+
   // Losing animation
   if (level.status == "lost") {
     this.pos.y += step;
@@ -313,15 +328,19 @@ Player.prototype.act = function(step, level, keys) {
   }
 };
 
-Level.prototype.playerTouched = function (type, actor) {
+// Called when either an obstacle with one argument or with an actor with two
+// If player touches lava level status is set to lost
+// If coin is touched it is removed from actors array and array is searched
+// for another coin if false then sets level status to won
+Level.prototype.playerTouched = function(type, actor) {
   if (type == "lava" && this.status == null) {
     this.status = "lost";
     this.finishDelay = 1;
   } else if (type == "coin") {
-      this.actors = this.actors.filter(function(other) {
-        return other != actor;
-      });
-      if (!this.actors.some(function(actor) {
+    this.actors = this.actors.filter(function(other) {
+      return other != actor;
+    });
+    if (!this.actors.some(function(actor) {
       return actor.type == "coin";
     })) {
       this.status = "won";
@@ -332,6 +351,8 @@ Level.prototype.playerTouched = function (type, actor) {
 
 var arrowCodes = {37: "left", 38: "up", 39: "right"};
 
+// tracks keys state returning true if the key is in keydown position and
+// false in keyup position
 function trackKeys(codes) {
   var pressed = Object.create(null);
   function handler(event) {
@@ -343,16 +364,25 @@ function trackKeys(codes) {
   }
   addEventListener("keydown", handler);
   addEventListener("keyup", handler);
+  
+  // Add function or method to pressed that can unregister handlers after level is complete
+  
+  pressed.unReg = function() {
+    removeEventListener("keydown", handler);
+    removeEventListener("keyup", handler);
+  };
   return pressed;
 }
 
+// helper function limits use of requestAnimationFrame to steps of 100ms 
+// calling frameFunc using the timeStep in s
 function runAnimation(frameFunc) {
   var lastTime = null;
   function frame(time) {
     var stop = false;
     if (lastTime != null) {
       var timeStep = Math.min(time - lastTime, 100) / 1000;
-      stop = frameFunc(timeStep) == false;
+      stop = frameFunc(timeStep) === false;
     }
     lastTime = time;
     if (!stop)
@@ -361,32 +391,58 @@ function runAnimation(frameFunc) {
   requestAnimationFrame(frame);
 }
 
-var arrows = trackKeys(arrowCodes);
-
+// displays level using Diplay argument and calls andThen function with
+// level status once level is finished
 function runLevel(level, Display, andThen) {
   var display = new Display(document.body, level);
-  runAnimation(function(step) {
+  var paused = false;
+  var arrows = trackKeys(arrowCodes);
+  addEventListener("keydown", function(event) {
+    if (event.keyCode == 27) {
+      paused = !paused;
+      runAnimation(animateFunction);
+    }
+  });
+  var animateFunction = function(step) {
+    if (paused) { return false; }
     level.animate(step, arrows);
     display.drawFrame(step);
     if (level.isFinished()) {
       display.clear();
+      arrows.unReg();
       if (andThen)
         andThen(level.status);
       return false;
     }
-  });
+  };
+  runAnimation(animateFunction);
 }
 
+// goes through the level plans using the Display interface
+// runs each level one at at a time until player has either won or lost
 function runGame(plans, Display) {
+  var lives = 3;
   function startLevel(n) {
     runLevel(new Level(plans[n]), Display, function(status) {
-      if (status == "lost")
-        startLevel(n);
-      else if (n < plans.length - 1)
-        startLevel(n + 1);
-      else
-        console.log("You win!");
-    });
-  }
-  startLevel(0);
+        if (status == "lost") {
+          lives--;
+          if (lives <= 0) {
+            console.log("You lost!");
+            lives = 3;
+            startLevel(0);
+          }
+          else
+            startLevel(n);
+        }
+        else if (n < plans.length - 1)
+          startLevel(n + 1);
+        else
+          console.log("You win!");
+      });
+    }
+    startLevel(0);
 }
+
+// Possible additions
+// a visual element for lives to see how many are left
+// paused screen graphic
